@@ -1,12 +1,16 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::browser::{self, request_animation_frame, window, LoopClosure};
+use crate::{
+    browser::{self, request_animation_frame, window, LoopClosure},
+    SheetRect,
+};
 use anyhow::*;
 use async_trait::async_trait;
 use futures::channel::{
     mpsc::{unbounded, UnboundedReceiver},
     oneshot::channel,
 };
+use serde::Deserialize;
 use std::result::Result::Ok;
 use std::sync::Mutex;
 use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
@@ -111,6 +115,11 @@ impl Renderer {
             .expect("Drawing is throwing exception! Unrecoverable error.");
         Ok(())
     }
+    pub fn draw_entire_image(&self, image: &HtmlImageElement, position: &Point) {
+        self.context
+            .draw_image_with_html_image_element(image, position.x.into(), position.y.into())
+            .expect("Drawing is throwing exceptions! Unrecoverable error.");
+    }
 }
 
 pub async fn load_image(source: &str) -> Result<HtmlImageElement> {
@@ -120,12 +129,16 @@ pub async fn load_image(source: &str) -> Result<HtmlImageElement> {
     let error_tx = Rc::clone(&success_tx);
     let success_callback = browser::closure_once(move || {
         if let Some(success_tx) = success_tx.lock().ok().and_then(|mut opt| opt.take()) {
-            success_tx.send(Ok(()));
+            success_tx
+                .send(Ok(()))
+                .expect("Success Send Failed in Image Load");
         }
     });
     let error_callback: Closure<dyn FnMut(JsValue)> = browser::closure_once(move |err| {
         if let Some(error_tx) = error_tx.lock().ok().and_then(|mut opt| opt.take()) {
-            error_tx.send(Err(anyhow!("Error Loading Image: {:#?}", err)));
+            error_tx
+                .send(Err(anyhow!("Error Loading Image: {:#?}", err)))
+                .expect("Error Send Failed in Image Load");
         }
     });
     image.set_onload(Some(success_callback.as_ref().unchecked_ref()));
@@ -202,5 +215,43 @@ impl KeyState {
 #[derive(Clone, Copy)]
 pub struct Point {
     pub x: i16,
-    pub y: i16
+    pub y: i16,
+}
+
+pub struct Image {
+    element: HtmlImageElement,
+    position: Point,
+    bounding_box: Rect,
+}
+impl Image {
+    pub fn new(element: HtmlImageElement, position: Point) -> Self {
+        let bounding_box = Rect {
+            x: position.x.into(),
+            y: position.y.into(),
+            width: element.width() as f32,
+            height: element.height() as f32,
+        };
+        Self {
+            element,
+            position,
+            bounding_box,
+        }
+    }
+
+    pub fn draw(&self, renderer: &Renderer) {
+        renderer.draw_entire_image(&self.element, &self.position)
+    }
+
+    pub fn bounding_box(&self) -> &Rect {
+        &self.bounding_box
+    }
+}
+
+impl Rect {
+    pub fn intersects(&self, rect: &Rect) -> bool {
+        self.x < (rect.x + rect.width)
+            && self.x + self.width > rect.x
+            && self.y < (rect.y + rect.height)
+            && self.y + self.height > rect.y
+    }
 }

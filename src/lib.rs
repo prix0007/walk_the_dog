@@ -2,21 +2,23 @@ use engine::GameLoop;
 use engine::Image;
 use engine::KeyState;
 use engine::Point;
+use engine::SpriteSheet;
+use game::Barrier;
+use game::Obstacle;
 use game::Platform;
 use game::RedHatBoy;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::HtmlImageElement;
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[macro_use]
 mod browser;
 mod engine;
 mod game;
 
-use crate::engine::{Game, Rect, Renderer};
+use crate::engine::{Game, Renderer};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 // When the `wee_alloc` feature is enabled, this uses `wee_alloc` as the global
@@ -48,9 +50,15 @@ pub struct Sheet {
 
 pub struct Walk {
     boy: RedHatBoy,
-    background: Image,
-    stone: Image,
-    platform: Platform,
+    backgrounds: [Image; 2],
+    obstacles: Vec<Box<dyn Obstacle>>,
+    obstacle_sheet: Rc<SpriteSheet>,
+}
+
+impl Walk {
+    pub fn velocity(&self) -> i16 {
+        -self.boy.walking_speed()
+    }
 }
 
 pub enum WalkTheDog {
@@ -74,16 +82,35 @@ impl Game for WalkTheDog {
                 let background = engine::load_image("BG.png").await?;
                 let stone = engine::load_image("Stone.png").await?;
                 let platform_sheet = browser::fetch_json("tiles.json").await?;
-                let platform = Platform::new(
+                let sprite_sheet = Rc::new(SpriteSheet::new(
                     platform_sheet.into_serde::<Sheet>()?,
                     engine::load_image("tiles.png").await?,
-                    Point { x: 370, y: LOW_PLATFORM },
+                ));
+                let platform = Platform::new(
+                    sprite_sheet.clone(),
+                    Point {
+                        x: 370,
+                        y: LOW_PLATFORM,
+                    },
                 );
+                let background_width = background.width() as i16;
                 Ok(Box::new(WalkTheDog::Loaded(Walk {
                     boy: rhb,
-                    background: Image::new(background, Point { x: 0, y: 0 }),
-                    stone: Image::new(stone, Point { x: 150, y: 546 }),
-                    platform,
+                    backgrounds: [
+                        Image::new(background.clone(), Point { x: 0, y: 0 }),
+                        Image::new(
+                            background,
+                            Point {
+                                x: background_width,
+                                y: 0,
+                            },
+                        ),
+                    ],
+                    obstacles: vec![
+                        Box::new(Barrier::new(Image::new(stone, Point { x: 150, y: 546 }))),
+                        Box::new(platform),
+                    ],
+                    obstacle_sheet: sprite_sheet,
                 })))
             }
             WalkTheDog::Loaded(_) => Err(anyhow!("Error: Game is already initialized!")),
@@ -108,32 +135,42 @@ impl Game for WalkTheDog {
             }
 
             walk.boy.update();
-            if walk
-                .boy
-                .bounding_box()
-                .intersects(walk.stone.bounding_box())
-            {
-                walk.boy.knock_out();
+
+            let velocity = walk.velocity();
+            let [first_background, second_background] = &mut walk.backgrounds;
+            first_background.move_horizontally(velocity);
+            second_background.move_horizontally(velocity);
+
+            if first_background.right() < 0 {
+                first_background.set_x(second_background.right());
             }
 
-            for bounding_box in &walk.platform.bounding_box() {
-                if walk.boy.bounding_box().intersects(bounding_box) {
-                    if walk.boy.velocity_y() > 0 && walk.boy.pos_y() < walk.platform.position.y {
-                        walk.boy.land_on(bounding_box.y);
-                    } else {
-                        walk.boy.knock_out();
-                    }
-                }
+            if second_background.right() < 0 {
+                second_background.set_x(first_background.right());
             }
+
+            walk.backgrounds.iter_mut().for_each(|background| {
+                background.move_horizontally(velocity);
+            });
+
+            walk.obstacles.retain(|obstacle| obstacle.right() > 0);
+
+            walk.obstacles.iter_mut().for_each(|obstacle| {
+                obstacle.move_horizontally(velocity);
+                obstacle.check_intersection(&mut walk.boy);
+            });
         }
     }
 
     fn draw(&self, renderer: &Renderer) {
         if let WalkTheDog::Loaded(walk) = self {
-            walk.background.draw(renderer);
+            walk.backgrounds.iter().for_each(|background| {
+                background.draw(renderer);
+            });
             walk.boy.draw(renderer);
-            walk.stone.draw(renderer);
-            walk.platform.draw(renderer);
+            walk.obstacles.iter().for_each(|obstacle| {
+                obstacle.draw(renderer);
+            });
         }
     }
 }

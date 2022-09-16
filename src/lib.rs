@@ -1,3 +1,4 @@
+use engine::Audio;
 use engine::GameLoop;
 use engine::Image;
 use engine::KeyState;
@@ -25,6 +26,7 @@ mod browser;
 mod engine;
 mod game;
 mod segments;
+mod sound;
 
 use crate::engine::{Game, Renderer};
 use anyhow::{anyhow, Result};
@@ -108,9 +110,15 @@ impl Game for WalkTheDog {
         match self {
             WalkTheDog::Loading => {
                 let json = browser::fetch_json("rhb.json").await?;
+                let audio = Audio::new()?;
+                let sound = audio.load_sound("SFX_Jump_23.mp3").await?;
+                let background_music = audio.load_sound("background_song.mp3").await?;
+                audio.play_looping_sound(&background_music)?;
                 let rhb = RedHatBoy::new(
                     json.into_serde::<Sheet>()?,
                     engine::load_image("rhb.png").await?,
+                    audio,
+                    sound,
                 );
                 let background = engine::load_image("BG.png").await?;
                 let stone = engine::load_image("Stone.png").await?;

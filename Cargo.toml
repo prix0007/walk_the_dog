@@ -36,6 +36,7 @@ async-trait = "0.1.52"
 # compared to the default allocator's ~10K. However, it is slower than the default
 # allocator, so it's not enabled by default.
 wee_alloc = { version = "0.4.2", optional = true }
+js-sys = "0.3.55"
 
 # The `web-sys` crate allows you to interact with the various browser APIs,
 # like the DOM.
@@ -53,7 +54,11 @@ features = [
     'HtmlImageElement',
     'Response',
     'Performance',
-    'KeyboardEvent'
+    'KeyboardEvent',
+    'AudioContext',
+    'AudioBuffer',
+    'AudioBufferSourceNode',
+    'AudioDestinationNode'
 ]
 
 # The `console_error_panic_hook` crate provides better debugging of panics by
@@ -63,5 +68,4 @@ features = [
 # These crates are used for running unit tests.
 [dev-dependencies]
 wasm-bindgen-test = "0.3.28"
-js-sys = "0.3.55"
 wasm-bindgen-futures = "0.4.28"

@@ -3,8 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <title>My Rust + Webpack project!</title>
+    <link rel="stylesheet" href="style.css" type="text/css" media="screen" />
+    <link rel="preload" as="image" href="Button.svg" />
+    <link rel="preload" as="font" href="kenney_future_narrow-webfont.woff2" />
   </head>
   <body>
+    <div id="ui" style="position: absolute">
+      <!-- <button>New Game</button> -->
+    </div>
     <canvas id="canvas" tabindex="0" height="600" width="600"
       >Your browser does not support the canvas.</canvas
     >

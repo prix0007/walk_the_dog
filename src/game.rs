@@ -9,10 +9,11 @@ use web_sys::HtmlImageElement;
 
 use self::red_hat_boy_states::*;
 use crate::{
-    browser,
     engine::{self, Audio, Game, Image, KeyState, Point, Rect, Renderer, Sound, SpriteSheet},
     segments::{platform_and_stone, stone_and_platform},
 };
+
+use crate::browser;
 
 pub struct Platform {
     sheet: Rc<SpriteSheet>,
@@ -57,6 +58,7 @@ impl Platform {
         &self.bounding_boxes
     }
 
+    #[allow(dead_code)]
     pub fn destination_box(&self) -> Rect {
         let platform = self.sheet.cell("13.png").expect("13.png does not exist");
         Rect::new(
@@ -66,6 +68,7 @@ impl Platform {
         )
     }
 
+    #[allow(dead_code)]
     pub fn draw(&self, renderer: &Renderer) {
         let platform = self.sheet.cell("13.png").expect("13.png does not exists");
 
@@ -875,6 +878,7 @@ impl<T> WalkTheDogState<T> {
 
 impl WalkTheDogStateMachine {
     fn update(self, keystate: &KeyState) -> Self {
+        log!("KeyState is {:#?}", keystate);
         match self {
             WalkTheDogStateMachine::Ready(state) => state.update(keystate).into(),
             WalkTheDogStateMachine::Walking(state) => state.update(keystate).into(),
@@ -1071,9 +1075,6 @@ impl GameOver {
         matches!(self.new_game_event.try_next(), Ok(Some(())))
     }
 }
-
-const LOW_PLATFORM: i16 = 420;
-const HIGH_PLATFORM: i16 = 375;
 const TIMELINE_MINIMUM: i16 = 1000;
 const OBSTACLE_BUFFER: i16 = 20;
 
@@ -1142,5 +1143,68 @@ impl Game for WalkTheDog {
         if let Some(machine) = &self.machine {
             machine.draw(renderer);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::channel::mpsc::unbounded;
+    use std::collections::HashMap;
+    use web_sys::{AudioBuffer, AudioBufferOptions};
+
+    use wasm_bindgen_test::wasm_bindgen_test;
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    // #[wasm_bindgen_test]
+    fn test_transition_from_game_over_to_new_game() {
+        let (_, receiver) = unbounded();
+        let image = HtmlImageElement::new().unwrap();
+        let audio = Audio::new().unwrap();
+        let options = AudioBufferOptions::new(1, 3000.0);
+        let sound = Sound {
+            buffer: AudioBuffer::new(&options).unwrap(),
+        };
+        let rhb = RedHatBoy::new(
+            Sheet {
+                frames: HashMap::new(),
+            },
+            image.clone(),
+            audio,
+            sound,
+        );
+        let sprite_sheet = SpriteSheet::new(
+            Sheet {
+                frames: HashMap::new(),
+            },
+            image.clone(),
+        );
+        let walk = Walk {
+            boy: rhb,
+            backgrounds: [
+                Image::new(image.clone(), Point { x: 0, y: 0 }),
+                Image::new(image.clone(), Point { x: 0, y: 0 }),
+            ],
+            obstacles: vec![],
+            obstacle_sheet: Rc::new(sprite_sheet),
+            stone: image.clone(),
+            timeline: 0,
+        };
+        let document = browser::document().unwrap();
+        document
+            .body()
+            .unwrap()
+            .insert_adjacent_html("afterbegin", "<div id='ui'></div>")
+            .unwrap();
+        browser::draw_ui("<p>This is the UI</p>").unwrap();
+        let state = WalkTheDogState {
+            _state: GameOver {
+                new_game_event: receiver,
+            },
+            walk: walk,
+        };
+        state.new_game();
+        let ui = browser::find_html_element_by_id("ui").unwrap();
+        assert_eq!(ui.child_element_count(), 0);
     }
 }

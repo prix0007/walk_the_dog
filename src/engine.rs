@@ -1,9 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    browser::{self, document, LoopClosure},
-    game::{Cell, RedHatBoy, Sheet},
-    sound::{self, connect_with_audio_node, create_buffer_source},
+    browser::{self, LoopClosure},
+    game::{Cell, Sheet},
+    sound::{self},
 };
 use anyhow::*;
 use async_trait::async_trait;
@@ -15,10 +15,7 @@ use futures::channel::{
 use std::result::Result::Ok;
 use std::sync::Mutex;
 use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
-use web_sys::{
-    AudioBuffer, AudioBufferSourceNode, AudioContext, CanvasRenderingContext2d, HtmlElement,
-    HtmlImageElement,
-};
+use web_sys::{AudioBuffer, AudioContext, CanvasRenderingContext2d, HtmlElement, HtmlImageElement};
 
 #[async_trait(?Send)]
 pub trait Game {
@@ -55,7 +52,9 @@ impl GameLoop {
         let mut keystate = KeyState::new();
         *g.borrow_mut() = Some(browser::create_raf_closure(move |perf: f64| {
             process_input(&mut keystate, &mut keyevent_receiver);
-            game_loop.accumulated_delta += (perf - game_loop.last_frame) as f32;
+            
+            let frame_time = perf - game_loop.last_frame;
+            game_loop.accumulated_delta += frame_time as f32;
 
             while game_loop.accumulated_delta > FRAME_SIZE {
                 game.update(&keystate);
@@ -64,6 +63,12 @@ impl GameLoop {
 
             game_loop.last_frame = perf;
             game.draw(&renderer);
+
+            if cfg!(debug_assertions) {
+                unsafe {
+                    draw_frame_rate(&renderer, frame_time);
+                }
+            }
 
             browser::request_animation_frame(f.borrow().as_ref().unwrap())
                 .expect("Error in Requesting frame animation from browser!");
@@ -124,6 +129,15 @@ impl Renderer {
         self.context
             .draw_image_with_html_image_element(image, position.x.into(), position.y.into())
             .expect("Drawing is throwing exceptions! Unrecoverable error.");
+    }
+
+    #[allow(dead_code)]
+    pub fn draw_text(&self, text: &str, location: &Point) -> Result<()> {
+        self.context.set_font("16pt serif");
+        self.context
+            .fill_text(text, location.x.into(), location.y.into())
+            .map_err(|err| anyhow!("Error filling text {:#?}", err))?;
+        Ok(())
     }
 }
 
@@ -197,6 +211,7 @@ fn process_input(state: &mut KeyState, keyevent_receiver: &mut UnboundedReceiver
     }
 }
 
+#[derive(Debug)]
 pub struct KeyState {
     pressed_keys: HashMap<String, web_sys::KeyboardEvent>,
 }
@@ -332,7 +347,7 @@ pub struct Audio {
 }
 #[derive(Clone)]
 pub struct Sound {
-    buffer: AudioBuffer,
+    pub buffer: AudioBuffer,
 }
 
 impl Audio {
@@ -361,13 +376,109 @@ impl Audio {
     }
 }
 
-
 pub fn add_click_handler(elem: HtmlElement) -> UnboundedReceiver<()> {
     let (mut click_sender, click_receiver) = unbounded();
     let on_click = browser::closure_wrap(Box::new(move || {
-        click_sender.start_send(());
+        click_sender
+            .start_send(())
+            .expect("Failed to Send Message to event handler!!");
     }) as Box<dyn FnMut()>);
     elem.set_onclick(Some(on_click.as_ref().unchecked_ref()));
     on_click.forget();
     click_receiver
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_rects_that_intersects_on_the_left() {
+        let rect1 = Rect {
+            position: Point { x: 10, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        let rect2 = Rect {
+            position: Point { x: 0, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        assert_eq!(rect2.intersects(&rect1), true);
+    }
+    #[test]
+    fn two_rects_that_intersects_on_the_top() {
+        let rect1 = Rect {
+            position: Point { x: 10, y: -10 },
+            height: 100,
+            width: 100,
+        };
+        let rect2 = Rect {
+            position: Point { x: 0, y: 0 },
+            height: 100,
+            width: 100,
+        };
+        assert_eq!(rect2.intersects(&rect1), true);
+    }
+    #[test]
+    fn two_rects_that_intersects_on_the_bottom() {
+        let rect1 = Rect {
+            position: Point { x: 0, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        let rect2 = Rect {
+            position: Point { x: 0, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        assert_eq!(rect2.intersects(&rect1), true);
+    }
+    #[test]
+    fn two_rects_that_intersects_on_the_right() {
+        let rect1 = Rect {
+            position: Point { x: 10, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        let rect2 = Rect {
+            position: Point { x: 20, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        assert_eq!(rect2.intersects(&rect1), true);
+    }
+    #[test]
+    fn two_rects_that_do_not_intersects() {
+        let rect1 = Rect {
+            position: Point { x: 10, y: 10 },
+            height: 100,
+            width: 100,
+        };
+        let rect2 = Rect {
+            position: Point { x: 200, y: 200 },
+            height: 100,
+            width: 100,
+        };
+        assert_eq!(rect2.intersects(&rect1), false);
+    }
+}
+
+unsafe fn draw_frame_rate(renderer: &Renderer, frame_time: f64) {
+    static mut FRAMES_COUNTED: i32 = 0;
+    static mut TOTAL_FRAME_TIME: f64 = 0.0;
+    static mut FRAME_RATE: i32 = 0;
+    FRAMES_COUNTED += 1;
+    TOTAL_FRAME_TIME += frame_time;
+    if TOTAL_FRAME_TIME > 1000.0 {
+        FRAME_RATE = FRAMES_COUNTED;
+        TOTAL_FRAME_TIME = 0.0;
+        FRAMES_COUNTED = 0;
+    }
+    if let Err(err) = renderer.draw_text(
+        &format!("Frame Rate {}", FRAME_RATE),
+        &Point { x: 400, y: 100 },
+    ) {
+        panic!("Could not draw text {:#?}", err);
+    }
 }
